@@ -1,0 +1,232 @@
+---
+title: "Coursera - Practical Machine Learning Assignment"
+author: "Pieter Eksteen"
+date: "11/24/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(caret)
+library(dplyr)
+library(doParallel)
+library(klaR)
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+# Overview
+
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+### Objective
+
+The goal of this project is to predict the manner in which they did the exercise. This report will show the actions taken during data preparation, model fitting and cross validation. The expected out of sample error will be reported and the chosen model will be used to predict 20 different test cases. 
+
+## Data Load and Preparation
+
+The train and test data sets are loaded directly from the URL`s. In order to train and cross validate the models, the training dataset is partitioned to create a Training Set (60% of the data) - The training set will be used to train the models and a Testing Set (40% of the data) - The testing set will be used to cross validate the accuracy of the models. The Test dataset contains the 20 test cases that will be predicted using the most accurate model.
+
+```{r Load Data}
+##--Data will be loaded directly from the provided URL`s
+train_url <- 'http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+test_url  <- 'http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+
+##--Load both train and test data
+train_df <- read.csv(url(train_url))
+test_df  <- read.csv(url(test_url))
+
+##--Partition the training data (60/40 split) 
+train_partition  <- createDataPartition(train_df$classe,
+                                        p=0.6,
+                                        list=FALSE)
+
+training_set <- train_df[train_partition, ]
+testing_set  <- train_df[-train_partition, ]
+
+```
+
+The training_set and testing_set both contain `r ncol(testing_set)` variables. A closer inspection of these variables reveals that many of them contain mostly NA values, a number of variables appear to have very little variance (this will be verified below) and some of them contain user and date time data which is not needed in this case.
+
+The first 5 columns (**`r paste(names(training_set[,1:5]), collapse = ', ')`**) contain user and date time data. These columns will be removed.
+
+```{r Remove User Data}
+
+training_set <- training_set %>% 
+    dplyr::select(-X, -user_name, -raw_timestamp_part_1, -raw_timestamp_part_2, -cvtd_timestamp)
+
+testing_set <- testing_set %>% 
+    dplyr::select(-X, -user_name, -raw_timestamp_part_1, -raw_timestamp_part_2, -cvtd_timestamp)
+
+```
+
+All variables containing more than 90% NA values are removed.
+
+```{r Remove NA Variables}
+##--Remove all variables that contain more than 90% NA`s from both training and test data
+training_set <- training_set %>%
+    select_if(~ !mean(is.na(.)) > 0.90)
+
+testing_set <- testing_set %>%
+    select_if(~ !mean(is.na(.)) > 0.90)
+
+```
+
+All variables with near zero variance are removed.
+
+```{r Remove Near Zero Variance}
+##--Remove all variables that have near zero variance from both training and test data
+near_zero <- nearZeroVar(training_set)
+
+training_set <- training_set[, -near_zero]
+testing_set  <- testing_set[, -near_zero]
+
+```
+
+After the above preparation and cleaning, both data sets now contain `r ncol(testing_set)`
+
+## Model Fitting
+
+The following models will be built:
+
+*  Stochastic Gradient Boosting
+*  Naive Bayes
+*  Boosted Logistic Regression
+*  Random Forests
+
+The accuracy of each model will be compared and the most accurate model will be used to predict the test cases.
+
+Parallel processing will be used.
+
+```{r Parallel Processing Config}
+
+cores <- detectCores() - 1
+cl <- makeCluster(cores)
+registerDoParallel(cl)
+
+```
+
+```{r Train Control Config}
+
+train_control <- trainControl(method = "cv",
+                              number = 4,
+                              allowParallel = TRUE,
+                              verboseIter = TRUE)
+
+```
+
+### Stochastic Gradient Boosting Model
+
+```{r Stochastic Gradient Boosting Model}
+
+model_gbm <- train(classe ~ .,
+                   data = training_set,
+                   method = "gbm",
+                   trControl = train_control)
+
+prediction_gbm <- predict(model_gbm, testing_set)
+accuracy_gbm <- confusionMatrix(prediction_gbm, testing_set$classe)$overall['Accuracy']
+accuracy_gbm
+
+```
+
+### Naive Bayes Model
+
+```{r Naive Bayes Model}
+
+model_nb <- train(classe ~ .,
+                  data = training_set,
+                  method = "nb",
+                  trControl = train_control)
+
+prediction_nb <- predict(model_nb, testing_set)
+accuracy_nb <- confusionMatrix(prediction_nb, testing_set$classe)$overall['Accuracy']
+accuracy_nb
+
+```
+
+### Boosted Logistic Regression Model
+
+```{r Boosted Logistic Regression Model}
+
+model_lboost <- train(classe ~ .,
+                      data = training_set,
+                      method = "LogitBoost",
+                      trControl = train_control)
+
+prediction_lboost <- predict(model_lboost, testing_set)
+accuracy_lboost <- confusionMatrix(prediction_lboost, testing_set$classe)$overall['Accuracy']
+accuracy_lboost
+
+```
+
+### Random Forests Model
+
+```{r Random Forests Model}
+
+model_rf <- train(classe ~ .,
+                  data = training_set,
+                  method = "rf",
+                  trControl = train_control)
+
+prediction_rf <- predict(model_rf, testing_set)
+accuracy_rf <- confusionMatrix(prediction_rf, testing_set$classe)$overall['Accuracy']
+accuracy_rf
+
+```
+
+```{r Accuracy Plot}
+
+accuracy_gbm_df <- tibble(model = 'Stochastic Gradient Boosting',
+                          accuracy = round(accuracy_gbm * 100,2))
+
+accuracy_nb_df <- tibble(model = 'Naive Bayes',
+                         accuracy = round(accuracy_nb * 100,2))
+
+accuracy_lboost_df <- tibble(model = 'Boosted Logistic Regression',
+                             accuracy = round(accuracy_lboost * 100,2))
+
+accuracy_rf_df <- tibble(model = 'Random Forests',
+                         accuracy = round(accuracy_rf * 100,2))
+
+accuracy_df <- rbind(accuracy_gbm_df,
+                     accuracy_nb_df,
+                     accuracy_lboost_df,
+                     accuracy_rf_df)
+
+g1 <- ggplot(accuracy_df,
+             aes(x = reorder(model, desc(accuracy)),
+                 y = accuracy,
+                 fill = model))+
+    geom_col(width = 0.7) +
+    labs(title= 'Model Accuracy',
+         y = "Accuracy",
+         x = "Model") +
+    geom_label(aes(label = paste(accuracy, '%')),size = 3) + 
+    theme(
+        panel.grid.major = element_line(colour = "grey", linetype = "solid"),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "black"),
+        axis.text.x = element_text(angle=45, vjust=0.5),
+        axis.text.y = element_text(face = 'bold'),
+        legend.position = 'none')
+
+g1
+
+```
+
+The above graph confirms that the Random Forests Model is the most accurate at 99.75%. This model will be used to predict the test cases.
+
+### Prediction on Test Cases
+
+```{r Prediction - Test Cases}
+
+test_case_predictions <- predict(model_rf, test_df)
+
+test_case_predictions
+
+```
+
